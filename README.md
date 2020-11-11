@@ -13,20 +13,22 @@ We want to broadcast a message to all the users and this message must be receive
 ### Problem at scale ###
 
 If you want to deliver the message in seconds and not in minutes you need to be aware of the following:
+
 * Lambda has a fix throughput 
 * SQS API have “nearly unlimited” API calls per seconds but, at some point it generates “too many connection error”
 * Amazon API Gateway WebSocket cannot use queue so onConnect and onDisconnect could hit the bursts limit
 
 ### Problem ###
 
-Once a user is connecting the WebSocket connectionId is save into DynamoDB so, you will end up with a table with 300k or 600k or more active connections. If you want to broadcast a message to all you need to load all the connections and send the message to each connection.
-With this logic in place the Lambda function that load all the connectionIds will take a while and processing all the connectionIds in Parallel will take more than a while and this is the problem with the Lambda throughput.
+Once a user is connecting, the WebSocket connectionId is saved into DynamoDB so, you will end up with a table with 300k or 600k or more active connections. If you want to broadcast a message to all active connections, you need to load all of them and send the message to each connection.
+With this logic in place the Lambda function that load all the connectionIds will take a while and processing all the connectionIds in parallel will take more than a while and this is the problem with the Lambda throughput.
 
-You can split “the load all connections” and “the broadcasting” but now you hit the limit of SQS sendMessage and even do you do in parallel you still have the Lambda throughput problem. 
+You can split “the load all connections” and “the broadcasting” but, now you hit the limit of SQS sendMessage and even do you do in parallel, you still have the Lambda throughput problem. 
 
 ### Horizontal scaling ###
 
 To go around the throughput limitation we need to scale horizontally and to do so we need to act at:
+
 * Lambda Query: where we want to load batch of connections in parallel. 
 * Lambda PostMessage: where you want to broadcast the message to small batch of connections
 
@@ -63,6 +65,7 @@ If you have one subscriber you risk to hit the account burst limit so the best a
 ### Note ###
 
 In this example I did not put code of:
+
 * Lambda onConnect
 * Lambda onDisconnect 
 * Lambda deleteStale 
