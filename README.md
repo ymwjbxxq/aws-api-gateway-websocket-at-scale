@@ -1,45 +1,110 @@
-**Edit a file, create a new file, and clone from Bitbucket in under 2 minutes**
+# WebSocket APIs in Amazon API Gateway #
 
-When you're done, you can delete the content in this README and update the file with details for others getting started with your repository.
+A while ago a play around with [websocket api]( https://bitbucket.org/DanBranch/api-gateway-websocket/) and find out that this “hello world” example does not works at all if you have a decent traffic on your website.
 
-*We recommend that you open this README in another tab as you perform the tasks below. You can [watch our video](https://youtu.be/0ocf7u76WSo) for a full demo of all the steps in this tutorial. Open the video in a new tab to avoid leaving Bitbucket.*
+### Architecture ###
 
----
+![picture](https://bitbucket.org/DanBranch/api-gateway-websocket-at-scale/downloads/websocket.png)
 
-## Edit a file
+### Goal ###
 
-You’ll start by editing this README file to learn how to edit a file in Bitbucket.
+We want to broadcast a message to all the users and this message must be received not in minutes but in few seconds. 
 
-1. Click **Source** on the left side.
-2. Click the README.md link from the list of files.
-3. Click the **Edit** button.
-4. Delete the following text: *Delete this line to make a change to the README from Bitbucket.*
-5. After making your change, click **Commit** and then **Commit** again in the dialog. The commit page will open and you’ll see the change you just made.
-6. Go back to the **Source** page.
+### Problem at scale ###
 
----
+If you want to deliver the message in seconds and not in minutes you need to be aware of the following:
+* Lambda has a fix throughput 
+* SQS API have “nearly unlimited” API calls per seconds but, at some point it generates “too many connection error”
+* Amazon API Gateway WebSocket cannot use queue so onConnect and onDisconnect could hit the bursts limit
 
-## Create a file
+### Problem ###
 
-Next, you’ll add a new file to this repository.
+Once a user is connecting the WebSocket connectionId is save into DynamoDB so, you will end up with a table with 300k or 600k or more active connections. If you want to broadcast a message to all you need to load all the connections and send the message to each connection.
+With this logic in place the Lambda function that load all the connectionIds will take a while and processing all the connectionIds in Parallel will take more than a while and this is the problem with the Lambda throughput.
 
-1. Click the **New file** button at the top of the **Source** page.
-2. Give the file a filename of **contributors.txt**.
-3. Enter your name in the empty file space.
-4. Click **Commit** and then **Commit** again in the dialog.
-5. Go back to the **Source** page.
+You can split “the load all connections” and “the broadcasting” but now you hit the limit of SQS sendMessage and even do you do in parallel you still have the Lambda throughput problem. 
 
-Before you move on, go ahead and explore the repository. You've already seen the **Source** page, but check out the **Commits**, **Branches**, and **Settings** pages.
+### Horizontal scaling ###
 
----
+To go around the throughput limitation we need to scale horizontally and to do so we need to act at:
+* Lambda Query: where we want to load batch of connections in parallel. 
+* Lambda PostMessage: where you want to broadcast the message to small batch of connections
 
-## Clone a repository
+To achieve the horizontal scaling, I have associated connections to “partition” and in this example is a table in DynamoDB made of two fields “partitionId, connectionCount”
 
-Use these steps to clone from SourceTree, our client for using the repository command-line free. Cloning allows you to work on your files locally. If you don't yet have SourceTree, [download and install first](https://www.sourcetreeapp.com/). If you prefer to clone from the command line, see [Clone a repository](https://confluence.atlassian.com/x/4whODQ).
+The partitionId can be what you want, I use numbers from 1…..to…..2500
+When a user is connecting on the onConnect Lambda I associate a connection to a partitionId with less connectionCount (trying to spread the load to all 2500 partitions)
 
-1. You’ll see the clone button under the **Source** heading. Click that button.
-2. Now click **Check out in SourceTree**. You may need to create a SourceTree account or log in.
-3. When you see the **Clone New** dialog in SourceTree, update the destination path and name if you’d like to and then click **Clone**.
-4. Open the directory you just created to see your repository’s files.
+Now when I want to broadcast my message to all, the Lambda Swarm send out 2500 messages containing “partitionId, message” to an SQS queue that trigger Lambda Query that will take care to load all the connections for a particular partitionId.
 
-Now that you're more familiar with your Bitbucket repository, go ahead and add a new file locally. You can [push your change back to Bitbucket with SourceTree](https://confluence.atlassian.com/x/iqyBMg), or you can [add, commit,](https://confluence.atlassian.com/x/8QhODQ) and [push from the command line](https://confluence.atlassian.com/x/NQ0zDQ).
+Each lambda invocation (we could have max 250 concurrent invocations) can read up to 10 messages for each SQS batch so, now we are able to run 10 small parallel queries to DynamoDB and load just small portions of connections.
+
+Let’s assume that each query for each partition return 100 connections, we will have a total of 1000 connections to send out for each invocation.
+
+You can send all the connections to one queue but at scale you will have too many messages and it will take time to go through all the messages a batch of 10.
+
+The solution is to scale also the queues and so, instead to send all messages to one queue, you need to spread the load into many queues (I used 10)
+
+![picture](https://bitbucket.org/DanBranch/api-gateway-websocket-at-scale/downloads/queue.png)
+
+Now each queue could have 1 subscriber Lambda PostMessage or multiple.
+
+If you have one subscriber you risk to hit the account burst limit so the best at scale is to have multiple accounts with higher quotas and subscribe each queue from a subscriber spread in multiple accounts (of course you need to see what you want to achieve)
+
+![picture](https://bitbucket.org/DanBranch/api-gateway-websocket-at-scale/downloads/queue_stats.png)
+
+### Improvements ###
+
+* Use multiple accounts where you spread the onConnect requests using Route53 etc.
+* Use DAX to improve query times.
+* Subscribe the queues with multiple accounts to get the max throughput
+* Use Lambda provisioned concurrency to keep lambda warms if you know that you have spikes etc.
+
+### Note ###
+
+In this example I did not put code of:
+* Lambda onConnect
+* Lambda onDisconnect 
+* Lambda deleteStale 
+
+They are taking care to add and delete the connectionId from DynamoDB and to increase and decrease the connectionCount at partition level.
+
+Activating DynamoDB Stream on the table you are able to increase/decrease the partition count:
+
+Increasing:
+```javascript
+const params = {
+    TableName: "poc-websocket-partition",
+    Key: {
+      "partitionId": partitionId,
+      "appId": "xxxx"
+    },
+    UpdateExpression: "set connectionCount = if_not_exists(connectionCount, :zero) + :incr",
+    ExpressionAttributeValues: {
+      ":incr": 1,
+      ":zero": 0
+    },
+    ReturnValues: "UPDATED_NEW"
+
+  };
+  await dynamoDbClient. put(params).promise();
+```
+
+Descreasing:
+```javascript
+const params = {
+    TableName: "poc-websocket-partition",
+    Key: {
+      "partitionId": partitionId,
+      "appId": "xxxx"
+    },
+    UpdateExpression: "ADD connectionCount :incr",
+    ExpressionAttributeValues: {
+      ":incr": -1
+    },
+    ReturnValues: "UPDATED_NEW"
+
+  };
+  await dynamoDbClient.update(params).promise();
+```
+ 
