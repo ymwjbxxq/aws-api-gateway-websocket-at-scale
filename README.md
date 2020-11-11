@@ -35,15 +35,15 @@ To go around the throughput limitation we need to scale horizontally and to do s
 To achieve the horizontal scaling, I have associated connections to “partition” and in this example is a table in DynamoDB made of two fields “partitionId, connectionCount”
 
 The partitionId can be what you want, I use numbers from 1…..to…..2500
-When a user is connecting on the onConnect Lambda I associate a connection to a partitionId with less connectionCount (trying to spread the load to all 2500 partitions)
+When a user is connecting on the Lambda onConnect I associate a connection to a partitionId with less connectionCount as possible (trying to spread the load to all 2500 partitions)
 
-Now when I want to broadcast my message to all, the Lambda Swarm send out 2500 messages containing “partitionId, message” to an SQS queue that trigger Lambda Query that will take care to load all the connections for a particular partitionId.
+When I want to broadcast my message to all active connections, the Lambda Swarm send out 2500 messages containing “partitionId, message” to an SQS queue that trigger Lambda Query that will take care to load all the connections for a particular partitionId.
 
-Each lambda invocation (we could have max 250 concurrent invocations) can read up to 10 messages for each SQS batch so, now we are able to run 10 small parallel queries to DynamoDB and load just small portions of connections.
+Each lambda invocation (we could have max 250 concurrent invocations) can read up to 10 messages for each SQS batch so, we are able to run 10 small parallel queries to DynamoDB and load just small portions of connections.
 
 Let’s assume that each query for each partition return 100 connections, we will have a total of 1000 connections to send out for each invocation.
 
-You can send all the connections to one queue but at scale you will have too many messages and it will take time to go through all the messages a batch of 10.
+You can send all the connections to one queue but at scale you will have too many messages and it will take time to go through all the messages with batch of 10.
 
 The solution is to scale also the queues and so, instead to send all messages to one queue, you need to spread the load into many queues (I used 10)
 
