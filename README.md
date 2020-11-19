@@ -1,6 +1,8 @@
 # WebSocket APIs in Amazon API Gateway #
 
-A while ago a play around with [websocket api]( https://bitbucket.org/DanBranch/api-gateway-websocket/) and find out that this “hello world” example does not works at all if you have a decent traffic on your website.
+A while ago a play around with [websocket api]( https://bitbucket.org/DanBranch/api-gateway-websocket/) and find out that this “hello world” example does not works at all if you have a decent traffic on your website or at least I was expecting to deliver message with a certain number of active user in faster manner way.
+Of course there are alternatives and more suitable solutions, like using a cluster with socket.io and socke.io-redis adaptor, which uses Redis as a message broker to pass messages between each Node.js process
+A client connected through the load balancer sends a message to one Node.js process in one container, and it broadcasts the message using Redis to the other Node.js process, which sends the message back down to the other connected client but, I wanted to push the limit in a serverless way.
 
 ### Architecture ###
 
