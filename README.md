@@ -1,12 +1,12 @@
 # WebSocket APIs in Amazon API Gateway #
 
-A while ago, I played around with [websocket api]( https://bitbucket.org/DanBranch/api-gateway-websocket/) and found out that this “hello world” example does not work at all if you have decent traffic on your website or at least I was expecting to deliver a message with a certain number of active user in a faster manner way.
+A while ago, I played around with [websocket api](https://github.com/ymwjbxxq/aws-api-gateway-websocket) and found out that this “hello world” example does not work at all if you have decent traffic on your website or at least I was expecting to deliver a message with a certain number of active user in a faster manner way.
 Of course, there are alternatives and more suitable solutions, like using a cluster with socket.io and socke.io-redis adaptor, which uses Redis as a message broker to pass messages between each Node.js process.
 A client connected through the load balancer sends a message to one Node.js process in one container. It broadcasts the message using Redis to the other Node.js process, which sends the message back down to the other connected client but, I wanted to push the limit in a serverless way.
 
 ### Architecture ###
 
-![picture](https://bitbucket.org/DanBranch/api-gateway-websocket-at-scale/downloads/websocket.png)
+![picture](https://github.com/ymwjbxxq/aws-api-gateway-websocket-at-scale/blob/master/websocket.png)
 
 ### Goal ###
 
@@ -49,13 +49,13 @@ You can send all the connections to one queue, but at scale, you will have too m
 
 The solution is also to scale the queues, and so, instead, to send all messages to one queue. It will help if you spread the load into many queues (I used 10)
 
-![picture](https://bitbucket.org/DanBranch/api-gateway-websocket-at-scale/downloads/queue.png)
+![picture](https://github.com/ymwjbxxq/aws-api-gateway-websocket-at-scale/blob/master/queue.png)
 
 Now each queue could have 1 subscriber Lambda PostMessage or multiple.
 
 If you have one subscriber, you risk hitting the account burst limit, so the best scale is to have multiple accounts with higher quotas and subscribe to each queue from a subscriber spread in various accounts (of course, you need to see what you want to achieve)
 
-![picture](https://bitbucket.org/DanBranch/api-gateway-websocket-at-scale/downloads/queue_stats.png)
+![picture](https://github.com/ymwjbxxq/aws-api-gateway-websocket-at-scale/blob/master/queue_stats.png)
 
 ### Improvements ###
 
